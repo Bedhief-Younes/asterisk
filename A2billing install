@@ -1,0 +1,223 @@
+yum install epel-release
+yum update
+yum -y install php-mcrypt php-xml perl-DBD-Pg git
+***
+yum install php-mysql
+***
+cd /usr/src
+git clone https://github.com/Star2Billing/a2billing.git
+cd /usr/src/a2billing
+curl -sS https://getcomposer.org/installer | php
+php composer.phar update
+php composer.phar install
+
+cd /usr/src/a2billing
+mysql -u root -p < DataBase/mysql-5.x/a2billing-createdb-user.sql
+
+cd /usr/src/a2billing/DataBase/mysql-5.x
+./install-db.sh
+
+Answer questions as follows:
+
+Enter Database Name: mya2billing
+Enter Hostname: localhost
+Enter UserName: root
+Enter Password: {mysql-root-password...not a2billing db password}
+
+Now check that the database and 90+ tables have been created
+
+mysql -u root -p mya2billing
+
+show tables;
+
+cp /usr/src/a2billing/a2billing.conf /etc/
+
+Make sure the following parameters are set as shown.
+nano /etc/a2billing.conf
+[database]
+hostname = localhost
+port = 3306
+user = a2billinguser
+password = a2billing
+dbname = mya2billing
+dbtype = mysql
+
+chmod 777 /etc/asterisk
+touch /etc/asterisk/additional_a2billing_iax.conf
+touch /etc/asterisk/additional_a2billing_sip.conf
+echo \#include additional_a2billing_sip.conf >> /etc/asterisk/sip_custom.conf
+echo \#include additional_a2billing_iax.conf >> /etc/asterisk/iax_custom.conf
+chown -Rf asterisk:asterisk /etc/asterisk/additional_a2billing_iax.conf
+chown -Rf asterisk:asterisk /etc/asterisk/additional_a2billing_sip.conf
+
+Run sound installation script
+cd /usr/src/a2billing/addons/sounds
+./install_a2b_sounds.sh
+chown -R asterisk:asterisk /var/lib/asterisk/sounds/
+
+Add the following to /etc/asterisk/manager_custom.conf
+or /etc/asterisk/manager.conf
+
+[myasterisk]
+secret=mycode
+deny=0.0.0.0/0.0.0.0
+permit=127.0.0.1/255.255.255.0
+read=system,call,log,verbose,command,agent,user
+write=system,call,log,verbose,command,agent,user
+
+Set up a2billing web folders
+A2billing has 3 GUIs.  admin, agent, and customer.
+
+mkdir /var/www/html/a2billing
+Directory may already exist.
+
+cp -rf /usr/src/a2billing/admin /var/www/html/a2billing
+cp -rf /usr/src/a2billing/agent /var/www/html/a2billing
+cp -rf /usr/src/a2billing/customer /var/www/html/a2billing
+cp -rf /usr/src/a2billing/common /var/www/html/a2billing
+cp -rf /usr/src/a2billing/vendor /var/www/html/a2billing
+chown -R asterisk:asterisk /var/www/html/a2billing
+chmod 755 /var/www/html/a2billing/admin/templates_c
+chmod 755 /var/www/html/a2billing/customer/templates_c
+chmod 755 /var/www/html/a2billing/agent/templates_c
+Protect /vendor folder
+echo 'Deny from all' > /var/www/html/a2billing/vendor/.htaccess
+
+Check admin web interface
+From a web browser go to (http://{my-ip-address}/a2billing/admin) and make sure you get the authentication screen.  Log in as follows.
+
+user: root
+password: changepassword
+
+Set up AGI
+mkdir /var/lib/asterisk/agi-bin
+cd /usr/src/a2billing/AGI
+cp a2billing.php /var/lib/asterisk/agi-bin
+cp a2billing_monitoring.php /var/lib/asterisk/agi-bin
+chown -R asterisk:asterisk /var/lib/asterisk/agi-bin
+chmod 755 /var/lib/asterisk/agi-bin/a2billing.php
+chmod 755 /var/lib/asterisk/agi-bin/a2billing_monitoring.php
+ln -s /var/www/html/a2billing/common/lib /var/lib/asterisk/agi-bin/lib
+ln -s /var/www/html/a2billing/vendor /var/lib/asterisk/vendor
+Add the following extensions to /etc/asterisk/extensions_custom.conf
+If not using FreePBX then this would go into /etc/asterisk/extensions.conf.  These are just examples.  Depending on what you are doing and how you are doing it some may not apply and some may not work.  Customizing this to your needs is considered beyond the scope of this document.  Search for documentation on Asterisk custom extensions and dialplans.  If possible try find examples specific to A2Billing.
+
+nano /etc/asterisk/extensions_custom.conf
+[macro-dialout-trunk-predial-hook]
+exten => s,1,GotoIf($["${OUT_${DIAL_TRUNK}:4:4}" = "A2B/"]?custom-freepbx-a2billing,${OUTNUM},1:2)
+exten => s,2,MacroExit
+
+[custom-freepbx-a2billing]
+exten => _X.,1,DeadAGI(a2billing.php,${OUT_${DIAL_TRUNK}:8})
+exten => _X.,n,Hangup()
+
+[a2billing]
+exten => _X.,1,Answer
+exten => _X.,n,Wait(1)
+exten => _X.,n,deadAGI(a2billing.php,1)
+exten => _X.,n,Hangup
+
+[a2billing-callback]
+exten => _X.,1,deadAGI(a2billing.php,1,callback)
+exten => _X.,n,Hangup
+
+[a2billing-cid-callback]
+exten => _X.,1,deadAGI(a2billing.php,1,cid-callback,34) ;last parameter is the callback area code
+exten => _X.,n,Hangup
+
+[a2billing-all-callback]
+exten => _X.,1,deadAGI(a2billing.php,1,all-callback,34) ;last parameter is the callback area code
+exten => _X.,n,Hangup
+
+[a2billing-did]
+exten => _X.,1,deadAGI(a2billing.php,1,did)
+exten => _X.,2,Hangup
+
+[a2billing_callingcard]
+; CallingCard application
+exten => _X.,1,NoOp(A2Billing Start)
+exten => _X.,n,DeadAgi(a2billing.php|1)
+exten => _X.,n,Hangup
+
+[a2billing_voucher]
+exten => _X.,1,Answer(1)
+exten => _X.,n,DeadAgi(a2billing.php|1|voucher)
+;exten => _X.,n,AGI(a2billing.php|1|voucher|44) ; will add 44 in front of the callerID
+exten => _X.,n,Hangup
+
+[custom-a2billing-did]
+exten => _X.,1,deadAGI(a2billing.php,1,did)
+exten => _X.,2,Hangup
+
+[custom-a2billing]
+exten => _X.,1,deadAGI(a2billing.php,1)
+exten => _X.,n,Hangup
+
+Recurring Services
+Recurring services are handled via the /etc/crontab. Make directory for A2Billing cron PID
+
+mkdir -p /var/run/a2billing
+chown asterisk:asterisk /var/run/a2billing
+
+Copy cron files to some permanent location such as /usr/local
+mkdir -p /usr/local/a2billing
+cp -R /usr/src/a2billing/Cronjobs /usr/local/a2billing/
+ln -sf /var/www/html/a2billing/common/lib /usr/local/a2billing/Cronjobs/lib
+chown -R asterisk:asterisk /usr/local/a2billing
+
+Add the cron jobs to /var/spool/cron/asterisk
+# update the currency table
+0 6 * * * php /usr/local/a2billing/Cronjobs/currencies_update_yahoo.php
+
+# manage the monthly services subscription
+0 6 1 * * php /usr/local/a2billing/Cronjobs/a2billing_subscription_fee.php
+
+# To check account of each Users and send an email if the balance is less than the user have choice.
+0 * * * * php /usr/local/a2billing/Cronjobs/a2billing_notify_account.php
+
+# this script will browse all the DID that are reserve and check if the customer need to pay for it.
+# bill them or warn them per email to know if they want to pay in order to keep their DIDs.
+0 2 * * * php /usr/local/a2billing/Cronjobs/a2billing_bill_diduse.php
+
+# This script will take care of the recurring service.
+0 12 * * * php /usr/local/a2billing/Cronjobs/a2billing_batch_process.php
+
+# To generate invoices and for each user.
+0 6 * * * php /usr/local/a2billing/Cronjobs/a2billing_batch_billing.php
+
+# to proceed the autodialer
+*/5 * * * * php /usr/local/a2billing/Cronjobs/a2billing_batch_autodialer.php
+
+# manage alarms
+0 * * * * php /usr/local/a2billing/Cronjobs/a2billing_alarm.php
+
+# manage archive
+0 12 * * * php /usr/local/a2billing/Cronjobs/a2billing_archive_data_cront.php
+
+#autorefill
+0 10 21 * * php /usr/local/a2billing/Cronjobs/a2billing_autorefill.php
+15 * * * * php /usr/local/a2billing/Cronjobs/a2billing_batch_cache.php
+Add log files
+mkdir -p /var/log/a2billing
+touch /var/log/a2billing/cront_a2b_alarm.log
+touch /var/log/a2billing/cront_a2b_autorefill.log
+touch /var/log/a2billing/cront_a2b_batch_process.log
+touch /var/log/a2billing/cront_a2b_archive_data.log
+touch /var/log/a2billing/cront_a2b_bill_diduse.log
+touch /var/log/a2billing/cront_a2b_subscription_fee.log
+touch /var/log/a2billing/cront_a2b_currency_update.log
+touch /var/log/a2billing/cront_a2b_invoice.log
+touch /var/log/a2billing/cront_a2b_check_account.log
+touch /var/log/a2billing/a2billing_paypal.log
+touch /var/log/a2billing/a2billing_epayment.log
+touch /var/log/a2billing/a2billing_api_ecommerce_request.log
+touch /var/log/a2billing/a2billing_api_callback_request.log
+touch /var/log/a2billing/a2billing_api_card.log
+touch /var/log/a2billing/a2billing_agi.log
+chown -R asterisk:asterisk /var/log/a2billing
+Add index file to prevent browsing of root folder
+touch /var/www/html/a2billing/index.html
+Log into the webpage
+http://{my-ip-address}/a2billing/admin
+
+cd /usr/lib64/asteris
