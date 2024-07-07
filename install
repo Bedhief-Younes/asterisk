@@ -1,0 +1,49 @@
+-First update your system
+
+yum -y update
+
+yum install -y gcc gcc-c++ wget bison  sox newt-devel libxml2-devel libtiff-devel php-gd audiofile-devel gtk2-devel subversion  kernel-devel autoconf cmake flex libtool* patch flex automake*  perl perl-libwww-perl cpan
+
+-Disable and block unnecessary ports and configure the firewall as required!
+system-config-firewall-tui
+
+-Selinux is not required or recommended.
+
+nano /etc/selinux/config
+
+# This file controls the state of SELinux on the system.
+# SELINUX= can take one of these three values:
+# enforcing – SELinux security policy is enforced.
+# permissive – SELinux prints warnings instead of enforcing.
+# disabled – SELinux is fully disabled.
+SELINUX=disabled
+# SELINUXTYPE= type of policy in use. Possible values are:
+# targeted – Only targeted network daemons are protected.
+# strict – Full SELinux protection.SELINUXTYPE=targeted # SETLOCALDEFS= Check local definition changes SETLOCALDEFS=0
+
+(Ctrl-x> y >Enter)
+-Also do this:
+service iptables stop
+chkconfig iptables off
+
+cd /usr/src/
+wget http://downloads.asterisk.org/pub/telephony/asterisk/releases/asterisk-1.8.32.3.tar.gz
+
+tar zxvf asterisk-1.8.32.3.tar.gz
+
+cd asterisk-1.8.32.3
+make clean
+./configure --prefix=/usr --libdir=/usr/lib64
+make menuselect
+In addons, check cdr_mysql and res_config_mysql save and exit.
+
+-Now install Asterisk. NOTE: If upgrading Asterisk do NOT run make samples.
+
+make
+make install
+make config
+make samples
+
+And finally let’s enable Asterisk to start at system boot time.
+
+chkconfig asterisk on
